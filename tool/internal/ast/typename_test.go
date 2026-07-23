@@ -114,6 +114,18 @@ func TestTypeNameMatches(t *testing.T) {
 			node:    &dst.InterfaceType{Methods: &dst.FieldList{}},
 			want:    true,
 		},
+		{
+			name:    "composite types gracefully return false",
+			typeStr: "error",
+			node:    &dst.ArrayType{Elt: &dst.Ident{Name: "error"}},
+			want:    false,
+		},
+		{
+			name:    "composite map gracefully returns false",
+			typeStr: "error",
+			node:    &dst.MapType{Key: &dst.Ident{Name: "string"}, Value: &dst.Ident{Name: "error"}},
+			want:    false,
+		},
 	}
 
 	for _, tt := range tests {
