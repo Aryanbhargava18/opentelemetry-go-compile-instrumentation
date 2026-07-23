@@ -107,7 +107,7 @@ func (r *streamingReader) finalize() {
 		r.span.SetAttributes(semconv.GenAIResponseTimeToFirstToken(firstTokenUs))
 	}
 
-	if captureContent && r.capturedStream.Len() > 0 {
+	if captureContentEnabled() && r.capturedStream.Len() > 0 {
 		r.span.AddEvent("gen_ai.content.completion", trace.WithAttributes(
 			attribute.String("gen_ai.completion", r.capturedStream.String()),
 		))
@@ -220,8 +220,10 @@ func (r *streamingReader) processChatChunk(payload []byte) {
 		if c.FinishReason != "" {
 			r.reasons = append(r.reasons, c.FinishReason)
 		}
-		if captureContent && c.Delta.Content != "" {
-			r.capturedStream.WriteString(c.Delta.Content)
+		if captureContentEnabled() && c.Delta.Content != "" {
+			if r.capturedStream.Len()+len(c.Delta.Content) <= maxResponseBodySize {
+				r.capturedStream.WriteString(c.Delta.Content)
+			}
 		}
 	}
 }
