@@ -10,7 +10,7 @@ PROPOSED
 
 Instrumenting AI SDKs (OpenAI, Anthropic) requires parsing Server-Sent Events (SSE) to aggregate telemetry like input/output token usage and finish reasons. Additionally, capturing streaming message content (`gen_ai.content.completion`) poses a high OOM risk if unbounded string deltas are accumulated in memory.
 
-Currently, this requires complex state machines inside the HTTP middleware of every SDK (e.g., `openai-go/streaming.go` is ~260 lines of custom `io.TeeReader` buffer management and content concatenation limits). Also, correctly handling premature stream aborts versus clean `[DONE]` events requires strict event-ordering logic to prevent dropped terminal states (e.g., overriding a parsed `finish_reason` if a subsequent transport error occurs). As we expand to support Gemini and Agent frameworks (LangChain), duplicating this buffer management and span lifecycle logic across every package will lead to memory leaks, inconsistent truncation limits, and semantic convention drift.
+Currently, this requires complex state machines inside the HTTP middleware of every SDK (e.g., `openai-go/streaming.go` is ~260 lines of custom `io.TeeReader` buffer management and content concatenation limits). Also, correctly handling premature stream aborts versus clean `[DONE]` events requires strict event-ordering logic to prevent dropped terminal states (e.g., overriding a parsed `finish_reason` if a subsequent transport error occurs). As we expand to support Gemini and Agent frameworks (LangChain), preventing duplicated buffer management and span lifecycle logic across every package will prevent memory leaks, inconsistent truncation limits, and semantic convention drift.
 
 ## Decision
 
