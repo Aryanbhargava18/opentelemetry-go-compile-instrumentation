@@ -10,7 +10,7 @@ PROPOSED
 
 Instrumenting AI SDKs (OpenAI, Anthropic) requires parsing Server-Sent Events (SSE) to aggregate telemetry like input/output token usage and finish reasons. Additionally, capturing streaming message content (`gen_ai.content.completion`) poses a high OOM risk if unbounded string deltas are accumulated in memory.
 
-Currently, this requires complex state machines inside the HTTP middleware of every SDK (e.g., `openai-go/streaming.go` is ~260 lines of custom `io.TeeReader` buffer management and content concatenation limits). Also, correctly handling premature stream aborts versus clean `[DONE]` events requires precise event-ordering logic to prevent dropped terminal states (e.g., overriding a parsed `finish_reason` if a subsequent transport error occurs). As we expand to support Gemini and Agent frameworks (LangChain), duplicating this buffer management and span lifecycle logic across every package will lead to memory leaks, inconsistent truncation limits, and semantic convention drift.
+Currently, this requires complex state machines inside the HTTP middleware of every SDK (e.g., `openai-go/streaming.go` is ~260 lines of custom `io.TeeReader` buffer management and content concatenation limits). Also, correctly handling premature stream aborts versus clean `[DONE]` events requires strict event-ordering logic to prevent dropped terminal states (e.g., overriding a parsed `finish_reason` if a subsequent transport error occurs). As we expand to support Gemini and Agent frameworks (LangChain), duplicating this buffer management and span lifecycle logic across every package will lead to memory leaks, inconsistent truncation limits, and semantic convention drift.
 
 ## Decision
 
@@ -78,7 +78,7 @@ Introduce `pkg/genai.Observer` to centralize telemetry mapping, span lifecycle, 
 ```
 
 ### 1. The `StreamAdapter` for HTTP Middleware
-For SDKs operating at the HTTP layer, the Observer provides a `StreamAdapter` that wraps and takes ownership of the `*http.Response.Body`, implementing `io.Closer` and guaranteeing `Body.Close()` is called exactly once—either on clean completion or on error return. It safely buffers and frames SSE chunks, delegating the extracted data to the underlying `genai.Observer`. The `genai.Observer` itself enforces the hard global memory limit (`maxResponseBodySize`) for content concatenation (preventing OOMs), calculates Time-To-First-Token (TTFT), and finalizes the OpenTelemetry span, guaranteeing correct terminal state ordering even on premature stream aborts.
+For SDKs operating at the HTTP layer, the Observer provides a `StreamAdapter` that wraps and takes ownership of the `*http.Response.Body`, implementing `io.Closer` and guaranteeing `Body.Close()` is called exactly once—either on clean completion or on error return. It buffers and frames SSE chunks, delegating the extracted data to the underlying `genai.Observer`. The `genai.Observer` itself enforces the hard global memory limit (`maxResponseBodySize`) for content concatenation (preventing OOMs), calculates Time-To-First-Token (TTFT), and finalizes the OpenTelemetry span, ensuring correct terminal state ordering even on premature stream aborts.
 
 ### 2. SDKs as JSON Extractors
 HTTP SDK instrumentations are reduced to lightweight JSON mappers. They provide a callback to the `StreamAdapter`:
@@ -111,7 +111,7 @@ The adapter splits the SSE stream by event boundaries (`\n\n`) and invokes `Chun
 *   **Semantic Integrity:** The `ID` and `Model` fields ensure `gen_ai.response.id` and `gen_ai.response.model` conventions are met dynamically as chunks arrive.
 *   **State Aggregation:** Because tokens and tool calls are streamed incrementally, the `genai.Observer` tracks running maximums for tokens (preventing double-counting if a provider sends cumulative usage per-chunk) and concatenates streamed `ToolCall.Args` by ID. The `ChunkExtractor` remains strictly stateless.
 *   **Extensibility:** The `ProviderAttributes` array allows Anthropic to pass through unique metrics (e.g., `gen_ai.anthropic.usage.cache_read_input_tokens`) without polluting the generic struct.
-*   **OOM Protection:** The `ContentDelta` is strictly bound and concatenated by the base `genai.Observer`, ensuring safe `gen_ai.content.completion` emission across all transport types.
+*   **OOM Protection:** The `ContentDelta` is bounded and concatenated by the base `genai.Observer`, ensuring safe `gen_ai.content.completion` emission across all transport types.
 
 ### 3. Agent Frameworks (LangChain)
 For non-HTTP frameworks like LangChain, the SDK instrumentation will bypass the `StreamAdapter` (as there is no SSE or `io.TeeReader`) and map their Go structs directly into the base `genai.Observer`, inheriting the same centralized memory bounds and semantic output across all paradigms.
@@ -139,8 +139,8 @@ This refactor is entirely internal to the HTTP middleware. It requires no API ch
 
 ## Consequences
 
-* **Positive:** Eliminates OOM vectors across all SDKs by centralizing content capture limits.
-* **Positive:** Drastically reduces code footprint for new SDKs (Gemini integration becomes a trivial JSON unmarshaling callback).
+* **Positive:** Mitigates OOM vectors across all SDKs by centralizing content capture limits.
+* **Positive:** Reduces code footprint for new SDKs (Gemini integration becomes a trivial JSON unmarshaling callback).
 * **Positive:** Extensible to Agent Frameworks without HTTP middleware dependencies.
 * **Negative:** Minor allocation overhead introduced by the callback interface and `ExtractedData` mapping structs.
 * **Negative:** A `ChunkExtractor` error introduces a policy decision: abort the stream and record `error.type`, or skip the malformed chunk and continue with partial telemetry. The correct policy (abort-on-error) must be explicitly enforced by `genai.Observer`; skipping malformed chunks silently would produce incomplete span data and defeat the purpose of centralized correctness.
