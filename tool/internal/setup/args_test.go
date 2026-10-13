@@ -56,6 +56,27 @@ func TestClassifyArgs_Build(t *testing.T) {
 		assert.Equal(t, expected, got)
 	})
 
+	t.Run("bare bool-style flags do not consume the next argument", func(t *testing.T) {
+		args := []string{"-buildvcs", "./cmd/app", "-modcacherw", "./pkg", "-buildvcs=false"}
+		got := classifyArgs(subcmdBuild, args)
+
+		expected := []ClassifiedArg{
+			{Index: 0, Raw: "-buildvcs", Kind: ArgBuildFlag, FlagName: "-buildvcs", HasValue: false},
+			{Index: 1, Raw: "./cmd/app", Kind: ArgTarget},
+			{Index: 2, Raw: "-modcacherw", Kind: ArgBuildFlag, FlagName: "-modcacherw", HasValue: false},
+			{Index: 3, Raw: "./pkg", Kind: ArgTarget},
+			{
+				Index:    4,
+				Raw:      "-buildvcs=false",
+				Kind:     ArgBuildFlag,
+				FlagName: "-buildvcs",
+				HasValue: true,
+				Value:    "false",
+			},
+		}
+		assert.Equal(t, expected, got)
+	})
+
 	t.Run("install behaves like build", func(t *testing.T) {
 		args := []string{"-v", "./..."}
 		got := classifyArgs(subcmdInstall, args)
@@ -429,6 +450,8 @@ func TestProbe(t *testing.T) {
 		{"-run", "TestProbe", "./a", "./b"},
 		{"./a", "-run", "TestProbe", "./b", "-tags=unused"},
 		{"./a", "-v", "./b"},
+		{"./a", "-buildvcs", "./b"},
+		{"./a", "-modcacherw", "./b"},
 		{"./a", "-args", "./b", "-tags=unused"},
 		{"-run", "TestProbe"},
 	} {
